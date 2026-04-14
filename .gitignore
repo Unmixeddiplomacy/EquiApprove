@@ -1,0 +1,68 @@
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Editor/OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Environment and secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Logs
+*.log
+logs/
+
+# Project-generated artifacts
+submission.csv
+results/*
+
+# Local datasets
+data/*.csv
+notebooks/results/
+
+# Optional model artifacts
+*.pkl
+*.joblib
+*.onnx
+
+# Streamlit deploy essentials (tracked in repo)
+!data/loan_dataset.csv
+!data/test.csv
+!results/model_xgb.pkl
+!results/model_debiased_xgb.pkl
+!results/debiased_model_features.pkl
+!results/label_encoders.pkl
+!results/shap_explainer.pkl
+
+# Streamlit local secrets
+.streamlit/secrets.toml
