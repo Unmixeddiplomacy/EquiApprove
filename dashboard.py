@@ -265,20 +265,117 @@ with tab_shap:
     if not enable_shap:
         st.info("Enable SHAP in sidebar.")
     else:
-        try:
-            model = joblib.load("results/model_xgb.pkl")
-            feats = model.get_booster().feature_names
-            df_enc = pd.get_dummies(raw_df.drop(columns=["id", "loan_approved"]), drop_first=True)
-            df_enc = df_enc.reindex(columns=feats, fill_value=0)
+        raw_features = raw_df.drop(columns=["id", "loan_approved"], errors="ignore")
+        df_enc_all = pd.get_dummies(raw_features, drop_first=False)
 
-            explainer = shap.Explainer(model)
-            shap_vals = explainer(df_enc)
+        if raw_features.empty:
+            st.error("No rows available for SHAP explainability.")
+        else:
+            sample_n = min(200, len(raw_features))
+            sample_idx = raw_features.sample(n=sample_n, random_state=42).index
 
-            fig = plt.figure()
-            shap.summary_plot(shap_vals, df_enc, show=False)
-            st.pyplot(fig)
-        except Exception as e:
-            st.error(f"SHAP failed: {e}")
+            col_base, col_deb = st.columns(2)
+
+            # ───── Baseline SHAP ─────
+            with col_base:
+                st.subheader("Baseline SHAP")
+                try:
+                    model_base = joblib.load("results/model_xgb.pkl")
+                    if hasattr(model_base, "get_booster"):
+                        base_feats = model_base.get_booster().feature_names
+                    elif hasattr(model_base, "feature_names_in_"):
+                        base_feats = list(model_base.feature_names_in_)
+                    else:
+                        raise ValueError("Could not determine baseline model feature names.")
+
+                    # Build baseline feature matrix in the same style used during training.
+                    if set(base_feats).issubset(set(raw_features.columns)):
+                        X_base_full = raw_features.copy()
+                        enc_path = Path("results/label_encoders.pkl")
+                        encoders = joblib.load(enc_path) if enc_path.exists() else {}
+
+                        for col in base_feats:
+                            if col in encoders:
+                                cls = encoders[col].classes_
+                                mapping = {str(v): i for i, v in enumerate(cls)}
+                                X_base_full[col] = X_base_full[col].astype(str).map(mapping).fillna(-1)
+                            elif X_base_full[col].dtype == object:
+                                X_base_full[col] = pd.to_numeric(X_base_full[col], errors="coerce").fillna(-1)
+
+                        X_base_full = X_base_full.reindex(columns=base_feats, fill_value=0)
+                    else:
+                        X_base_full = pd.get_dummies(raw_features, drop_first=False).reindex(columns=base_feats, fill_value=0)
+
+                    X_base = X_base_full.loc[sample_idx]
+                    explainer_base = shap.Explainer(model_base)
+                    shap_base = explainer_base(X_base)
+
+                    fig_base = plt.figure(figsize=(8, 6))
+                    shap.summary_plot(
+                        shap_base,
+                        X_base,
+                        max_display=X_base.shape[1],
+                        show=False,
+                    )
+                    st.pyplot(fig_base)
+                    st.caption(f"Showing all {X_base.shape[1]} baseline model features.")
+                except Exception as e:
+                    st.error(f"Baseline SHAP failed: {e}")
+
+            # ───── Debiased SHAP ─────
+            with col_deb:
+                st.subheader("Debiased SHAP")
+                try:
+                    deb_model_path = Path("results/model_debiased_xgb.pkl")
+                    deb_feats_path = Path("results/debiased_model_features.pkl")
+
+                    if not deb_model_path.exists():
+                        raise FileNotFoundError("Debiased model file not found at results/model_debiased_xgb.pkl")
+
+                    model_deb = joblib.load(deb_model_path)
+
+                    if deb_feats_path.exists():
+                        deb_feats = joblib.load(deb_feats_path)
+                    elif hasattr(model_deb, "feature_names_in_"):
+                        deb_feats = list(model_deb.feature_names_in_)
+                    else:
+                        raise ValueError("Debiased feature list not found. Please generate results/debiased_model_features.pkl")
+
+                    X_deb_full = df_enc_all.reindex(columns=deb_feats, fill_value=0)
+                    X_deb_sample = X_deb_full.loc[sample_idx]
+                    bg_n = min(60, len(X_deb_sample))
+                    X_bg = X_deb_sample.sample(n=bg_n, random_state=42)
+
+                    def predict_debiased(X):
+                        if isinstance(X, np.ndarray):
+                            X = pd.DataFrame(X, columns=deb_feats)
+                        else:
+                            X = pd.DataFrame(X).reindex(columns=deb_feats, fill_value=0)
+
+                        if hasattr(model_deb, "_pmf_predict"):
+                            pmf = model_deb._pmf_predict(X)
+                            if isinstance(pmf, np.ndarray) and pmf.ndim == 2 and pmf.shape[1] > 1:
+                                return pmf[:, 1]
+
+                        if hasattr(model_deb, "predict_proba"):
+                            return model_deb.predict_proba(X)[:, 1]
+
+                        return np.asarray(model_deb.predict(X), dtype=float)
+
+                    explainer_deb = shap.Explainer(predict_debiased, X_bg)
+                    shap_deb = explainer_deb(X_deb_sample)
+
+                    fig_deb = plt.figure(figsize=(8, 6))
+                    shap.summary_plot(
+                        shap_deb,
+                        X_deb_sample,
+                        max_display=X_deb_sample.shape[1],
+                        show=False,
+                    )
+                    st.pyplot(fig_deb)
+                    st.caption(f"Showing all {X_deb_sample.shape[1]} debiased model features.")
+                except Exception as e:
+                    st.error(f"Debiased SHAP failed: {e}")
 
 # ═════════════ 🧪 SIMULATOR ═════════════
 with tab_sim:
